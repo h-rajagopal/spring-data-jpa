@@ -19,14 +19,12 @@ import jakarta.persistence.EntityManager;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.springframework.data.domain.KeysetScrollPosition;
-
 import org.jspecify.annotations.Nullable;
+
+import org.springframework.data.domain.KeysetScrollPosition;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.support.JpaEntityInformation;
 import org.springframework.data.jpa.repository.support.JpqlQueryTemplates;
@@ -50,7 +48,7 @@ class JpaKeysetScrollQueryCreator extends JpaQueryCreator {
 			JpqlQueryTemplates templates, JpaEntityInformation<?, ?> entityInformation, KeysetScrollPosition scrollPosition,
 			EntityManager em) {
 
-		super(tree, type, provider, templates, em);
+		super(tree, type, provider, templates, em.getMetamodel());
 
 		this.entityInformation = entityInformation;
 		this.scrollPosition = scrollPosition;
