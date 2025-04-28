@@ -25,6 +25,8 @@ import java.util.List;
 
 import org.jspecify.annotations.Nullable;
 
+import org.springframework.data.domain.Range;
+import org.springframework.data.domain.Score;
 import org.springframework.data.domain.ScoringFunction;
 import org.springframework.data.domain.Vector;
 import org.springframework.data.jpa.provider.PersistenceProvider;
@@ -63,6 +65,7 @@ public class ParameterMetadataProvider {
 	private final JpqlQueryTemplates templates;
 	private final JpaParameters jpaParameters;
 	private int position;
+	private int bindMarker;
 
 	/**
 	 * Creates a new {@link ParameterMetadataProvider} from the given {@link CriteriaBuilder} and
@@ -129,6 +132,18 @@ public class ParameterMetadataProvider {
 	}
 
 	/**
+	 * @return the {@link SimilarityNormalizer}.
+	 */
+	SimilarityNormalizer getSimilarityNormalizer() {
+
+		if (accessor != null && accessor.normalizeSimilarity()) {
+			return SimilarityNormalizer.get(accessor.getScoringFunction());
+		}
+
+		return SimilarityNormalizer.IDENTITY;
+	}
+
+	/**
 	 * Builds a new {@link PartTreeParameterBinding} for given {@link Part} and the next {@link Parameter}.
 	 */
 	@SuppressWarnings("unchecked")
@@ -176,12 +191,14 @@ public class ParameterMetadataProvider {
 
 		Object value = bindableParameterValues == null ? PLACEHOLDER : bindableParameterValues.next();
 		int currentPosition = ++position;
+		int currentBindMarker = ++bindMarker;
 
 		BindingIdentifier bindingIdentifier = BindingIdentifier.of(currentPosition);
 
 		/* identifier refers to bindable parameters, not _all_ parameters index */
-		MethodInvocationArgument methodParameter = ParameterOrigin.ofParameter(bindingIdentifier);
-		PartTreeParameterBinding binding = new PartTreeParameterBinding(bindingIdentifier, methodParameter, reifiedType,
+		MethodInvocationArgument methodParameter = ParameterOrigin.ofParameter(BindingIdentifier.of(currentPosition));
+		PartTreeParameterBinding binding = new PartTreeParameterBinding(BindingIdentifier.of(currentBindMarker),
+				methodParameter, reifiedType,
 				part, value, templates, escape);
 
 		// PartTreeParameterBinding is more expressive than a potential ParameterBinding for Vector.
@@ -226,22 +243,6 @@ public class ParameterMetadataProvider {
 		return parameterBinding;
 	}
 
-	private void maybeAdd(ParameterBinding parameterBinding) {
-
-		boolean found = false;
-
-		for (ParameterBinding existing : bindings) {
-
-			if (existing.isCompatibleWith(parameterBinding)) {
-				found = true;
-			}
-		}
-
-		if (!found) {
-			bindings.add(parameterBinding);
-		}
-	}
-
 	EscapeCharacter getEscape() {
 		return escape;
 	}
@@ -255,9 +256,129 @@ public class ParameterMetadataProvider {
 	 */
 	ParameterBinding nextSynthetic(Object value, Object source) {
 
-		int currentPosition = ++position;
+		int currentPosition = ++bindMarker;
 
 		return new ParameterBinding(BindingIdentifier.of(currentPosition), ParameterOrigin.synthetic(value, source));
+	}
+
+	RangeParameterBinding lower(PartTreeParameterBinding within, SimilarityNormalizer normalizer) {
+
+		int bindMarker = within.getRequiredPosition();
+
+		if (!bindings.remove(within)) {
+			bindMarker = ++this.bindMarker;
+		}
+
+		BindingIdentifier identifier = within.getIdentifier();
+		RangeParameterBinding rangeBinding = new RangeParameterBinding(
+				identifier.mapName(name -> name + "_upper").withPosition(bindMarker), within.getOrigin(), true, normalizer);
+		bindings.add(rangeBinding);
+
+		return rangeBinding;
+	}
+
+	RangeParameterBinding upper(PartTreeParameterBinding within, SimilarityNormalizer normalizer) {
+
+		int bindMarker = within.getRequiredPosition();
+
+		if (!bindings.remove(within)) {
+			bindMarker = ++this.bindMarker;
+		}
+
+		BindingIdentifier identifier = within.getIdentifier();
+		RangeParameterBinding rangeBinding = new RangeParameterBinding(
+				identifier.mapName(name -> name + "_upper").withPosition(bindMarker), within.getOrigin(), false, normalizer);
+		bindings.add(rangeBinding);
+
+		return rangeBinding;
+	}
+
+	ScoreParameterBinding normalize(PartTreeParameterBinding within, SimilarityNormalizer normalizer) {
+
+		bindings.remove(within);
+
+		ScoreParameterBinding rangeBinding = new ScoreParameterBinding(within.getIdentifier(), within.getOrigin(),
+				normalizer);
+		bindings.add(rangeBinding);
+
+		return rangeBinding;
+	}
+
+	static class ScoreParameterBinding extends ParameterBinding {
+
+		private final SimilarityNormalizer normalizer;
+
+		/**
+		 * Creates a new {@link ParameterBinding} for the parameter with the given identifier and origin.
+		 *
+		 * @param identifier of the parameter, must not be {@literal null}.
+		 * @param origin the origin of the parameter (expression or method argument)
+		 */
+		ScoreParameterBinding(BindingIdentifier identifier, ParameterOrigin origin, SimilarityNormalizer normalizer) {
+			super(identifier, origin);
+			this.normalizer = normalizer;
+		}
+
+		@Override
+		public @Nullable Object prepare(@Nullable Object valueToBind) {
+
+			if (valueToBind instanceof Score score) {
+				return normalizer.getScore(score.getValue());
+			}
+
+			return super.prepare(valueToBind);
+		}
+
+		@Override
+		public boolean isCompatibleWith(ParameterBinding binding) {
+
+			if (super.isCompatibleWith(binding) && binding instanceof ScoreParameterBinding other) {
+				return normalizer == other.normalizer;
+			}
+
+			return false;
+		}
+	}
+
+	static class RangeParameterBinding extends ScoreParameterBinding {
+
+		private final boolean lower;
+
+		/**
+		 * Creates a new {@link ParameterBinding} for the parameter with the given identifier and origin.
+		 *
+		 * @param identifier of the parameter, must not be {@literal null}.
+		 * @param origin the origin of the parameter (expression or method argument)
+		 */
+		RangeParameterBinding(BindingIdentifier identifier, ParameterOrigin origin, boolean lower,
+				SimilarityNormalizer normalizer) {
+			super(identifier, origin, normalizer);
+			this.lower = lower;
+		}
+
+		@Override
+		public @Nullable Object prepare(@Nullable Object valueToBind) {
+
+			if (valueToBind instanceof Range<?> r) {
+				if (lower) {
+					return super.prepare(r.getLowerBound().getValue().orElse(null));
+				} else {
+					return super.prepare(r.getUpperBound().getValue().orElse(null));
+				}
+			}
+
+			return super.prepare(valueToBind);
+		}
+
+		@Override
+		public boolean isCompatibleWith(ParameterBinding binding) {
+
+			if (super.isCompatibleWith(binding) && binding instanceof RangeParameterBinding other) {
+				return lower == other.lower;
+			}
+
+			return false;
+		}
 	}
 
 }
