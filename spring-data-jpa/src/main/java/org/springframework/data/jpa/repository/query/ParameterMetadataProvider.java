@@ -217,7 +217,7 @@ public class ParameterMetadataProvider {
 			return accessor.getScoringFunction();
 		}
 
-		return ScoringFunction.UNSPECIFIED;
+		return ScoringFunction.unspecified();
 	}
 
 	ParameterBinding getVectorBinding() {
