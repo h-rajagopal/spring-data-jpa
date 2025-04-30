@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
 
 import org.jspecify.annotations.Nullable;
 
+import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.data.domain.Range;
 import org.springframework.data.domain.Score;
 import org.springframework.data.domain.ScoringFunction;
@@ -467,11 +468,10 @@ public class JpaQueryCreator extends AbstractQueryCreator<String, JpqlQueryBuild
 					PartTreeParameterBinding parameter = provider.next(part, String.class);
 					JpqlQueryBuilder.Expression parameterExpression = potentiallyIgnoreCase(part.getProperty(),
 							placeholder(parameter));
+
 					// Predicate like = builder.like(propertyExpression, parameterExpression, escape.getEscapeCharacter());
 					String escapeChar = Character.toString(escape.getEscapeCharacter());
-					return
-
-					type.equals(NOT_LIKE) || type.equals(NOT_CONTAINING)
+					return type.equals(NOT_LIKE) || type.equals(NOT_CONTAINING)
 							? whereIgnoreCase.notLike(parameterExpression, escapeChar)
 							: whereIgnoreCase.like(parameterExpression, escapeChar);
 				case TRUE:
@@ -498,7 +498,6 @@ public class JpaQueryCreator extends AbstractQueryCreator<String, JpqlQueryBuild
 
 					where = JpqlQueryBuilder.where(entity, property);
 					return type.equals(IS_NOT_EMPTY) ? where.isNotEmpty() : where.isEmpty();
-
 				case WITHIN:
 				case NEAR:
 					PartTreeParameterBinding vector = provider.next(part);
@@ -506,7 +505,7 @@ public class JpaQueryCreator extends AbstractQueryCreator<String, JpqlQueryBuild
 
 					if (within.getValue() instanceof Range<?> r) {
 
-						Range<Score> range = (Range<Score>) within.getValue();
+						Range<Score> range = (Range<Score>) r;
 
 						if (range.getUpperBound().isBounded() || range.getUpperBound().isBounded()) {
 
@@ -552,6 +551,8 @@ public class JpaQueryCreator extends AbstractQueryCreator<String, JpqlQueryBuild
 						return getUpperPredicate(true, distance, distanceValue);
 					}
 
+					throw new InvalidDataAccessApiUsageException(
+							"Near/Within keywords must be used with a Score or Range<Score> type");
 				default:
 					throw new IllegalArgumentException("Unsupported keyword " + type);
 			}
